@@ -1,3 +1,48 @@
+def generate_predictions(df, num_predictions=5):
+    """Generate predictions for next draws with dates"""
+    if df.empty:
+        return []
+    try:
+        freq_data = analyze_frequency(df)
+        all_freq = freq_data['all_frequencies']
+        # Get most and least frequent numbers
+        frequent_nums = list(freq_data['most_frequent'].keys())[:30]
+        # Fix: get least frequent from the end of most_frequent list
+        all_sorted = sorted(all_freq.items(), key=lambda x: x[1], reverse=True)
+        less_frequent_nums = [num for num, freq in all_sorted[-30:]]
+        # Get next draw dates
+        next_dates = get_next_draw_dates(num_predictions)
+        predictions = []
+        for i in range(num_predictions):
+            prediction = []
+            # Pick 3-4 frequent numbers
+            if len(frequent_nums) >= 4:
+                prediction.extend(np.random.choice(frequent_nums, size=4, replace=False))
+            else:
+                prediction.extend(frequent_nums[:4])
+            # Pick 2-3 less frequent numbers  
+            if len(less_frequent_nums) >= 2:
+                prediction.extend(np.random.choice(less_frequent_nums, size=2, replace=False))
+            else:
+                prediction.extend(less_frequent_nums[:2])
+            # Ensure we have exactly 6 unique numbers
+            prediction = list(set(prediction))[:6]
+            while len(prediction) < 6:
+                # Fill with random numbers from 1-60 not already in prediction
+                available = [n for n in range(1, 61) if n not in prediction]
+                if available:
+                    prediction.append(np.random.choice(available))
+            prediction_data = {
+                'numbers': sorted([int(x) for x in prediction[:6]]),
+                'date': next_dates[i].strftime('%d/%m/%Y') if i < len(next_dates) else 'Data não disponível',
+                'weekday': next_dates[i].strftime('%A') if i < len(next_dates) else '',
+                'contest_estimate': None  # Will be calculated based on current data
+            }
+            predictions.append(prediction_data)
+        return predictions
+    except Exception as e:
+        print(f"Erro ao gerar previsões: {e}")
+        return []
 #!/usr/bin/env python3
 """
 Mega Sena Web Dashboard
@@ -311,7 +356,7 @@ def analyze_frequency(df):
         all_numbers.extend(df[f'numero_{i}'].tolist())
     
     frequency = Counter(all_numbers)
-    
+    print(f"📊 Frequência dos números: {frequency}")
     return {
         'most_frequent': dict(frequency.most_common(10)),
         'least_frequent': dict(frequency.most_common()[-10:]),
