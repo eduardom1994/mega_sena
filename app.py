@@ -29,6 +29,149 @@ app.secret_key = 'mega_sena_dashboard_2024'
 LOCK_FILE = "app.lock"
 PID_FILE = "app.pid"
 
+# ...restante do código...
+
+# Adiciona a função e o endpoint após a criação do app
+def generate_interval_predictions(df, num_predictions=8):
+    """Gera previsões dos próximos jogos usando média dos intervalos de aparição de cada número"""
+    if df.empty:
+        return []
+
+    # Para cada número, calcula os índices dos concursos em que apareceu
+    number_intervals = {}
+    number_last_index = {}
+    for num in range(1, 61):
+        appearances = []
+        for idx, row in df.iterrows():
+            if num in [row[f'numero_{i}'] for i in range(1, 7)]:
+                appearances.append(idx)
+        if len(appearances) > 1:
+            intervals = [appearances[i] - appearances[i-1] for i in range(1, len(appearances))]
+            avg_interval = np.mean(intervals)
+            number_intervals[num] = avg_interval
+            number_last_index[num] = appearances[-1]
+        elif len(appearances) == 1:
+            # Se só apareceu uma vez, assume intervalo médio igual à média global
+            number_intervals[num] = None
+            number_last_index[num] = appearances[-1]
+        else:
+            number_intervals[num] = None
+            number_last_index[num] = None
+
+    # Média global para números com poucos dados
+    global_avg = np.mean([v for v in number_intervals.values() if v is not None])
+
+    # Prever próximos 8 jogos
+    last_contest = len(df) - 1
+    predictions = []
+    for i in range(1, num_predictions+1):
+        contest_index = last_contest + i
+        # Para cada número, calcula quando ele deve aparecer de novo
+        predicted_appearance = {}
+        for num in range(1, 61):
+            if number_last_index[num] is not None:
+                interval = number_intervals[num] if number_intervals[num] is not None else global_avg
+                predicted_appearance[num] = number_last_index[num] + interval
+            else:
+                predicted_appearance[num] = contest_index + global_avg
+        # Seleciona os 6 números cuja previsão de aparição está mais próxima do concurso atual
+        sorted_nums = sorted(predicted_appearance.items(), key=lambda x: abs(x[1] - contest_index))
+        selected = [num for num, _ in sorted_nums[:6]]
+        predictions.append({
+            'numbers': sorted(selected),
+            'contest_estimate': contest_index + 1
+        })
+    return predictions
+
+@app.route('/api/predictions-interval')
+def generate_interval_predictions(df, num_predictions=8):
+    """Gera previsões dos próximos jogos usando média dos intervalos de aparição de cada número"""
+    if df.empty:
+        return []
+
+    # Para cada número, calcula os índices dos concursos em que apareceu
+    number_intervals = {}
+    number_last_index = {}
+    for num in range(1, 61):
+        appearances = []
+        for idx, row in df.iterrows():
+            if num in [row[f'numero_{i}'] for i in range(1, 7)]:
+                appearances.append(idx)
+        if len(appearances) > 1:
+            intervals = [appearances[i] - appearances[i-1] for i in range(1, len(appearances))]
+            avg_interval = np.mean(intervals)
+            number_intervals[num] = avg_interval
+            number_last_index[num] = appearances[-1]
+        elif len(appearances) == 1:
+            # Se só apareceu uma vez, assume intervalo médio igual à média global
+            number_intervals[num] = None
+            number_last_index[num] = appearances[-1]
+        else:
+            number_intervals[num] = None
+            number_last_index[num] = None
+
+    # Média global para números com poucos dados
+    global_avg = np.mean([v for v in number_intervals.values() if v is not None])
+
+    # Prever próximos 8 jogos
+    last_contest = len(df) - 1
+    predictions = []
+    for i in range(1, num_predictions+1):
+        contest_index = last_contest + i
+        # Para cada número, calcula quando ele deve aparecer de novo
+        predicted_appearance = {}
+        for num in range(1, 61):
+            if number_last_index[num] is not None:
+                interval = number_intervals[num] if number_intervals[num] is not None else global_avg
+                predicted_appearance[num] = number_last_index[num] + interval
+            else:
+                predicted_appearance[num] = contest_index + global_avg
+        # Seleciona os 6 números cuja previsão de aparição está mais próxima do concurso atual
+        sorted_nums = sorted(predicted_appearance.items(), key=lambda x: abs(x[1] - contest_index))
+        selected = [num for num, _ in sorted_nums[:6]]
+        predictions.append({
+            'numbers': sorted(selected),
+            'contest_estimate': contest_index + 1
+        })
+    return predictions
+
+@app.route('/api/predictions-interval')
+def get_interval_predictions():
+    """Endpoint para previsões dos próximos 8 jogos usando média dos intervalos"""
+    df = load_data()
+    predictions = generate_interval_predictions(df, num_predictions=8)
+    return jsonify({'predictions_interval': predictions})
+#!/usr/bin/env python3
+"""
+Mega Sena Web Dashboard
+======================
+
+Interface web moderna para visualizar análises da Mega Sena com atualização em tempo real.
+"""
+
+from flask import Flask, render_template, jsonify, request
+import pandas as pd
+import numpy as np
+import json
+import os
+import threading
+import time
+import atexit
+import signal
+import sys
+from datetime import datetime, timedelta
+from collections import Counter
+import plotly.graph_objs as go
+import plotly.utils
+from mega_sena_analyzer import MegaSenaAnalyzer
+
+app = Flask(__name__)
+app.secret_key = 'mega_sena_dashboard_2024'
+
+# Application lock system
+LOCK_FILE = "app.lock"
+PID_FILE = "app.pid"
+
 def create_lock():
     """Create application lock to prevent multiple instances"""
     try:
@@ -509,8 +652,8 @@ def get_next_draw_dates(num_draws=5):
         print(f"Erro ao calcular próximas datas: {e}")
         return []
 
-def generate_predictions(df, num_predictions=5):
-    """Generate predictions for next draws with dates"""
+def generate_interval_predictions(df, num_predictions=8):
+    """Generate predictions for next draws with dates and interval-based analysis"""
     if df.empty:
         return []
     
@@ -518,11 +661,19 @@ def generate_predictions(df, num_predictions=5):
         freq_data = analyze_frequency(df)
         all_freq = freq_data['all_frequencies']
         
-        # Get most and least frequent numbers
-        frequent_nums = list(freq_data['most_frequent'].keys())[:30]
-        # Fix: get least frequent from the end of most_frequent list
-        all_sorted = sorted(all_freq.items(), key=lambda x: x[1], reverse=True)
-        less_frequent_nums = [num for num, freq in all_sorted[-30:]]
+        # Get numbers with their intervals
+        number_intervals = {}
+        for num in range(1, 61):
+            appearances = []
+            for idx, row in df.iterrows():
+                if num in [row[f'numero_{i}'] for i in range(1, 7)]:
+                    appearances.append(idx)
+            if len(appearances) > 1:
+                intervals = [appearances[i] - appearances[i-1] for i in range(1, len(appearances))]
+                avg_interval = np.mean(intervals)
+                number_intervals[num] = avg_interval
+            else:
+                number_intervals[num] = None
         
         # Get next draw dates
         next_dates = get_next_draw_dates(num_predictions)
@@ -530,18 +681,15 @@ def generate_predictions(df, num_predictions=5):
         predictions = []
         for i in range(num_predictions):
             prediction = []
-            # Pick 3-4 frequent numbers
-            if len(frequent_nums) >= 4:
-                prediction.extend(np.random.choice(frequent_nums, size=4, replace=False))
-            else:
-                prediction.extend(frequent_nums[:4])
-                
-            # Pick 2-3 less frequent numbers  
-            if len(less_frequent_nums) >= 2:
-                prediction.extend(np.random.choice(less_frequent_nums, size=2, replace=False))
-            else:
-                prediction.extend(less_frequent_nums[:2])
-            
+            for num, interval in number_intervals.items():
+                if interval is not None:
+                    # Calculate next predicted appearance
+                    next_appearance = df.index[-1] + interval
+                    # If next appearance is before the current date, skip
+                    if next_appearance < next_dates[i].toordinal():
+                        continue
+                    # Add the number to the prediction
+                    prediction.append(num)
             # Ensure we have exactly 6 unique numbers
             prediction = list(set(prediction))[:6]
             while len(prediction) < 6:
@@ -561,7 +709,7 @@ def generate_predictions(df, num_predictions=5):
         
         return predictions
     except Exception as e:
-        print(f"Erro ao gerar previsões: {e}")
+        print(f"Erro ao gerar previsões com análise de intervalos: {e}")
         return []
 
 if __name__ == '__main__':
