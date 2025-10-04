@@ -150,7 +150,8 @@ def load_data():
     if os.path.exists(csv_file):
         try:
             df = pd.read_csv(csv_file)
-            df['data'] = pd.to_datetime(df['data'], format='%d/%m/%Y')
+            # Aceita datas em formato misto (ISO8601 ou brasileiro)
+            df['data'] = pd.to_datetime(df['data'], dayfirst=True, errors='coerce')
             return df
         except Exception as e:
             print(f"Erro ao carregar dados: {e}")
